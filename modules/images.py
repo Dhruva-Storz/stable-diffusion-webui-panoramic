@@ -64,69 +64,208 @@ def image_grid(imgs, batch_size=1, rows=None):
 Grid = namedtuple("Grid", ["tiles", "tile_w", "tile_h", "image_w", "image_h", "overlap"])
 
 
+# def split_grid(image, tile_w=512, tile_h=512, overlap=64):
+#     w = image.width
+#     h = image.height
+
+#     non_overlap_width = tile_w - overlap
+#     non_overlap_height = tile_h - overlap
+
+#     cols = math.ceil((w - overlap) / non_overlap_width)
+#     rows = math.ceil((h - overlap) / non_overlap_height)
+
+#     dx = (w - tile_w) / (cols - 1) if cols > 1 else 0
+#     dy = (h - tile_h) / (rows - 1) if rows > 1 else 0
+
+#     grid = Grid([], tile_w, tile_h, w, h, overlap)
+#     for row in range(rows):
+#         row_images = []
+
+#         y = int(row * dy)
+
+#         if y + tile_h >= h:
+#             y = h - tile_h
+
+#         for col in range(cols):
+#             x = int(col * dx)
+
+#             if x + tile_w >= w:
+#                 x = w - tile_w
+
+#             tile = image.crop((x, y, x + tile_w, y + tile_h))
+
+#             row_images.append([x, tile_w, tile])
+
+#         grid.tiles.append([y, tile_h, row_images])
+
+#     return grid
+
+
+# def combine_grid(grid):
+#     def make_mask_image(r):
+#         r = r * 255 / grid.overlap
+#         r = r.astype(np.uint8)
+#         return Image.fromarray(r, 'L')
+
+#     mask_w = make_mask_image(np.arange(grid.overlap, dtype=np.float32).reshape((1, grid.overlap)).repeat(grid.tile_h, axis=0))
+#     mask_h = make_mask_image(np.arange(grid.overlap, dtype=np.float32).reshape((grid.overlap, 1)).repeat(grid.image_w, axis=1))
+
+#     combined_image = Image.new("RGB", (grid.image_w, grid.image_h))
+#     for y, h, row in grid.tiles:
+#         combined_row = Image.new("RGB", (grid.image_w, h))
+#         for x, w, tile in row:
+#             if x == 0:
+#                 combined_row.paste(tile, (0, 0))
+#                 continue
+
+#             combined_row.paste(tile.crop((0, 0, grid.overlap, h)), (x, 0), mask=mask_w)
+#             combined_row.paste(tile.crop((grid.overlap, 0, w, h)), (x + grid.overlap, 0))
+
+#         if y == 0:
+#             combined_image.paste(combined_row, (0, 0))
+#             continue
+
+#         combined_image.paste(combined_row.crop((0, 0, combined_row.width, grid.overlap)), (0, y), mask=mask_h)
+#         combined_image.paste(combined_row.crop((0, grid.overlap, combined_row.width, h)), (0, y + grid.overlap))
+
+#     return combined_image
+
+
+## New version of split_grid and combine_grid methods so that they also blend along left and right edges of images.
+## achieving 360 degree consistency in order to generate panoramic images. This is primarily important during the upscaling step
+
+def wrap_image(image, overlap_width):
+    '''
+    This function copies a vertical slice of width {overlap_width} from both ends of the image, and pastes it onto the opposite ends of the image.
+    It takes in an image of size x, and outputs an image of size {x+2*overlap_width}
+    '''
+    width, height = image.size
+    new_width = width + overlap_width * 2
+
+    # Create a new blank image with increased width
+    new_image = Image.new("RGB", (new_width, height))
+
+    # Paste the original image to the right position
+    new_image.paste(image, (overlap_width, 0))
+
+    # Copy the left strip of overlap pixels to the right side
+    left_strip = image.crop((0, 0, overlap_width, height))
+    new_image.paste(left_strip, (new_width - overlap_width, 0))
+
+    # Copy the right strip of overlap pixels to the left side
+    right_strip = image.crop((width - overlap_width, 0, width, height))
+    new_image.paste(right_strip, (0, 0))
+
+    return new_image
+
 def split_grid(image, tile_w=512, tile_h=512, overlap=64):
+    '''
+    Adapted from automatic1111's stable diffusion WebUI code. 
+    The split_grid function takes in an image, calculates the image division that accommodates the desired tile_size, with the desired overlap between the tiles,
+    and then splits the image into these tiles and stores it in a grid variable.
+
+    Our edits to this code are very minimal, with the only addition being that it calls wrap_image first to include two extra overlap regions on either side to achieve 360 consistency.
+    '''
+
+    # create new image with overlap borders on either side, so that the final output of sdupscale is 360 consistent
+    w_image = wrap_image(image, overlap)
+    image = w_image
+    
     w = image.width
     h = image.height
 
-    non_overlap_width = tile_w - overlap
-    non_overlap_height = tile_h - overlap
+    non_overlap_width = tile_w - overlap 
+    non_overlap_height = tile_h - overlap 
 
-    cols = math.ceil((w - overlap) / non_overlap_width)
+    cols = math.ceil((w - overlap) / non_overlap_width) 
     rows = math.ceil((h - overlap) / non_overlap_height)
 
-    dx = (w - tile_w) / (cols - 1) if cols > 1 else 0
-    dy = (h - tile_h) / (rows - 1) if rows > 1 else 0
+    dx = (w - tile_w) / (cols - 1) if cols > 1 else 0 
+    dy = (h - tile_h) / (rows - 1) if rows > 1 else 0 
 
-    grid = Grid([], tile_w, tile_h, w, h, overlap)
+    grid = Grid([], tile_w, tile_h, w, h, overlap) 
+
     for row in range(rows):
         row_images = []
 
-        y = int(row * dy)
+        y = int(row * dy) 
 
         if y + tile_h >= h:
-            y = h - tile_h
+            y = h - tile_h 
 
-        for col in range(cols):
-            x = int(col * dx)
+        for col in range(cols): 
+            x = int(col * dx)  
 
-            if x + tile_w >= w:
-                x = w - tile_w
+            if x + tile_w >= w: 
+                x = w - tile_w 
 
-            tile = image.crop((x, y, x + tile_w, y + tile_h))
+            tile = image.crop((x, y, x + tile_w, y + tile_h)) 
 
-            row_images.append([x, tile_w, tile])
-
+            row_images.append([x, tile_w, tile]) 
+ 
         grid.tiles.append([y, tile_h, row_images])
 
     return grid
 
+def combine_grid(grid, bi=False):
+    '''
+    Adapted from automatic1111's stable diffusion WebUI code. 
+    The combine grid function does the opposite of the split grid function, in that it reconstitutes individual image tiles into a single image, blending the overlapped regions in between the tiles.
+    The input grid variable of this function in our case would be the upscaled image grids that the sdupscaler produces. 
 
-def combine_grid(grid):
+    Our edits to this method are complementary to our edits to the split_grid function, namely that it reverses the increase in image width we gained from the wrap_image method, and also including blending between the two outer regions of the image
+    so that the final image will have no sharp edges between the two ends. This method only operates on the horizontal blending, and not the vertical blending.
+
+    The bi parameter enables and disables a test feature where both ends are blended, but the function seems to work very well with only one edge blended. If this remains to be the case after testing, we can rewrite the 3 methods to be more efficient
+    by only considering one edge of the image instead of 2. 
+    '''
+
     def make_mask_image(r):
+        # creates a grandient 
         r = r * 255 / grid.overlap
         r = r.astype(np.uint8)
         return Image.fromarray(r, 'L')
+    
+    new_w = grid.image_w - grid.overlap * 2
 
-    mask_w = make_mask_image(np.arange(grid.overlap, dtype=np.float32).reshape((1, grid.overlap)).repeat(grid.tile_h, axis=0))
-    mask_h = make_mask_image(np.arange(grid.overlap, dtype=np.float32).reshape((grid.overlap, 1)).repeat(grid.image_w, axis=1))
+    mask_w = make_mask_image(np.arange(grid.overlap, dtype=np.float32).reshape((1, grid.overlap)).repeat(grid.tile_h, axis=0)) # create horizontal gradient mask of size (overlap, h)
+    if bi:
+        flip_mask = Image.fromarray(np.flip(mask_w, axis=1), 'L')
 
-    combined_image = Image.new("RGB", (grid.image_w, grid.image_h))
-    for y, h, row in grid.tiles:
-        combined_row = Image.new("RGB", (grid.image_w, h))
-        for x, w, tile in row:
-            if x == 0:
-                combined_row.paste(tile, (0, 0))
+    mask_h = make_mask_image(np.arange(grid.overlap, dtype=np.float32).reshape((grid.overlap, 1)).repeat(new_w, axis=1)) # create vertical gradient mask
+
+
+    combined_image = Image.new("RGB", (new_w, grid.image_h)) 
+
+
+    for y, h, row in grid.tiles: 
+        combined_row = Image.new("RGB", (new_w, h)) 
+        for x, w, tile in row: 
+            if x == 0: 
+                combined_row.paste(tile.crop((grid.overlap, 0, w, h)), (0, 0)) 
+                right_overlap = tile.crop((0, 0, grid.overlap, h))
+                continue 
+
+            if x+w==grid.image_w:
+                combined_row.paste(tile.crop((0, 0, grid.overlap, h)), (x-grid.overlap, 0), mask=mask_w) 
+                combined_row.paste(tile.crop((grid.overlap, 0, w-grid.overlap, h)), (x, 0))
+
+                if bi:
+                    combined_row.paste(tile.crop((w-grid.overlap, 0, w, h)), (0, 0), mask=flip_mask)
+                combined_row.paste(right_overlap, (new_w-grid.overlap,0), mask=mask_w)
                 continue
 
-            combined_row.paste(tile.crop((0, 0, grid.overlap, h)), (x, 0), mask=mask_w)
-            combined_row.paste(tile.crop((grid.overlap, 0, w, h)), (x + grid.overlap, 0))
+            combined_row.paste(tile.crop((0, 0, grid.overlap, h)), (x-grid.overlap, 0), mask=mask_w) 
+            combined_row.paste(tile.crop((grid.overlap, 0, w, h)), (x, 0))
+        
 
-        if y == 0:
-            combined_image.paste(combined_row, (0, 0))
-            continue
+        if y == 0: 
+            combined_image.paste(combined_row, (0, 0)) 
+            continue 
 
-        combined_image.paste(combined_row.crop((0, 0, combined_row.width, grid.overlap)), (0, y), mask=mask_h)
+        combined_image.paste(combined_row.crop((0, 0, combined_row.width, grid.overlap)), (0, y), mask=mask_h) #
         combined_image.paste(combined_row.crop((0, grid.overlap, combined_row.width, h)), (0, y + grid.overlap))
+
 
     return combined_image
 
